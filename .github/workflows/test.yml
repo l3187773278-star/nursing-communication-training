@@ -13,9 +13,9 @@ jobs:
       matrix:
         node: ['20', '22', '24']
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
           node-version: ${{ matrix.node }}
 
@@ -27,5 +27,8 @@ jobs:
             echo "OK  $f"
           done
 
+      # 用不带参数的 `node --test` 自动发现用例。
+      # 不要写成 `node --test test/`：Node 20 能跑，但 Node 22 起会把 `test/`
+      # 当成要执行的模块，直接 Cannot find module 退出（本仓库踩过，CI 抓到的）。
       - name: 全部测试（49 条）
-        run: node --test test/
+        run: node --test

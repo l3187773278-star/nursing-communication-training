@@ -91,10 +91,14 @@ node server.js          # 或双击 启动.bat
 ## 测试
 
 ```bash
-node --test test/        # 全部 49 条（零依赖，用 Node 18+ 内置 runner）
+node --test              # 全部 49 条（零依赖，用 Node 18 起内置的 node:test）
 node test/core.test.js   # 只看核心逻辑（24 条）
 node test/boot.test.js   # 只看启动冒烟与接线（25 条）
 ```
+
+> 用**不带参数**的 `node --test`，它会自己发现 `test/` 下的用例。
+> 写成 `node --test test/` 在 Node 20 上能跑，但 **Node 22 起会把 `test/` 当成要执行的模块**，
+> 直接 `Cannot find module` 退出——这个坑是 CI 在 Node 22 / 24 上先抓到的。
 
 CI：`.github/workflows/test.yml` 会在每次 push / PR 时，用 Node 20、22、24 各跑一遍
 语法检查与上面全部用例——改坏哪一条，提交时就红，不用等人想起来再跑。

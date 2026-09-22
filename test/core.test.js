@@ -3,7 +3,7 @@
 /* ============================================================
    核心逻辑测试（test/core.test.js）
 
-   跑法：node --test test/   或   node test/core.test.js
+   跑法：node --test   或   node test/core.test.js
    零依赖：用 Node 18+ 内置的 node:test。
 
    这些用例守的是「评分链路」——它出问题时不会报错，只会静默错：
