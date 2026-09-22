@@ -1,0 +1,84 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>护理沟通模拟训练 · 演示版</title>
+<meta name="description" content="对话式 AI 虚拟患者 + 自动评分：面向护理专业学生的护患沟通训练（12 个场景，DeepSeek 驱动）">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+<header>
+  <div>
+    <h1>护理沟通模拟训练</h1>
+    <div class="sub">演示版 · 12 个场景（健康宣教 / 心理疏导 / 情绪冲突 / 复杂情况）+ 自动评分</div>
+  </div>
+  <div class="spacer"></div>
+  <div id="status">已就绪</div>
+  <details class="settings">
+    <summary>⚙ 设置</summary>
+    <div class="panel">
+      <label>DeepSeek API Key（必填）</label>
+      <input id="apiKey" type="password" placeholder="sk-..." autocomplete="off">
+      <label>接口地址 Base URL</label>
+      <input id="baseURL" type="text" placeholder="https://api.deepseek.com">
+      <label>模型名称 Model</label>
+      <input id="model" type="text" placeholder="deepseek-chat">
+      <div class="row">
+        <button class="primary" data-action="save-settings">保存</button>
+        <button data-action="restore-settings">还原</button>
+      </div>
+      <div class="hint">
+        在 platform.deepseek.com 申请 key（充值 10 元足够测试）。<br>
+        也可换成其他兼容 OpenAI 接口的模型（通义 / Kimi / 本地 Ollama）。
+      </div>
+    </div>
+  </details>
+</header>
+
+<div class="scenario">
+  <span class="title" id="scenarioTitle"></span>
+  <select id="scenarioSelect"></select>
+</div>
+
+<details class="brief" open>
+  <summary>📋 场景资料 <span class="briefTag" id="briefTag"></span></summary>
+  <div class="briefGrid">
+    <div class="briefCard">
+      <div class="briefTitle">👤 患者基础信息（接诊前已掌握）</div>
+      <table id="patientInfoTable"></table>
+      <div class="hint" style="margin-top:6px;">接诊对象通常已经掌握这些信息，不要明知故问；沟通要点是“聊出来”而不是“审问”。</div>
+    </div>
+    <div class="briefCard">
+      <div class="briefTitle">🧭 护士训练参考</div>
+      <div id="nurseRefBody"></div>
+    </div>
+  </div>
+</details>
+
+<main>
+  <div id="chat"></div>
+  <div class="hint" id="hintLine"></div>
+  <div class="controls">
+    <button id="scoreBtn" class="primary" data-action="score">结束沟通并评分</button>
+    <button data-action="reset">重新开始</button>
+  </div>
+  <div class="inputrow">
+    <textarea id="input" rows="1" placeholder="以护士身份开始沟通…（回车发送）"></textarea>
+    <button id="sendBtn" class="primary" data-action="send">发送</button>
+  </div>
+
+  <div id="scorePanel">
+    <h2>📋 自动评分结果</h2>
+    <div id="scoreBody"></div>
+  </div>
+</main>
+
+<!-- 模块按依赖顺序加载：数据 → 纯逻辑 → 界面 → 装配与启动 -->
+<script src="js/scenarios.js"></script>
+<script src="js/core.js"></script>
+<script src="js/ui.js"></script>
+<script src="js/boot.js"></script>
+</body>
+</html>
