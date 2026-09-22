@@ -19,15 +19,40 @@ const MIME = {
   '.svg': 'image/svg+xml',
 };
 
-const server = http.createServer((req, res) => {
-  res.setHeader('Access-Control-Allow-Origin', '*');
+/* 请求体上限：正常对话几十 KB 就够，留 256 KB 余量，避免无上限累积把内存打满 */
+const MAX_BODY = 256 * 1024;
+
+/* CORS：只允许本机页面调用。之前是 *，等于任何网页都能把本服务当代理用
+   （配合 /api/chat 转发 Authorization，会把填在页面里的 Key 送去攻击者指定的地址）。 */
+const LOCAL_ORIGIN = /^https?:\/\/(localhost|127\.0\.0\.1|\[::1\])(:\d+)?$/;
+
+function setCors(req, res) {
+  const origin = String(req.headers.origin || '');
+  if (LOCAL_ORIGIN.test(origin)) {
+    res.setHeader('Access-Control-Allow-Origin', origin);
+    res.setHeader('Vary', 'Origin');
+  }
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
-  if (req.method === 'OPTIONS') { res.writeHead(204); res.end(); return; }
+  // 前端用它确认「同源确实是本地 server.js」——静态托管不会带这个头，探测因此不会误判
+  res.setHeader('X-Local-Server', 'nursing-communication-training');
+}
 
+function handle(req, res) {
   if (req.method === 'POST' && req.url === '/api/chat') {
     let body = '';
-    req.on('data', c => body += c);
+    let over = false;
+    req.on('data', c => {
+      if (over) return;
+      if (body.length > MAX_BODY) {
+        over = true;
+        res.writeHead(413, { 'Content-Type': 'application/json; charset=utf-8' });
+        res.end(JSON.stringify({ error: '请求体过大，上限 256 KB' }));
+        req.destroy();
+        return;
+      }
+      body += c;
+    });
     req.on('end', () => {
       let parsed;
       try { parsed = JSON.parse(body); }
@@ -57,7 +82,16 @@ const server = http.createServer((req, res) => {
 
   // 静态文件服务
   if (req.method === 'GET') {
-    const urlPath = decodeURIComponent(req.url.split('?')[0]);
+    // decodeURIComponent 对畸形转义（/%ZZ、/%E0%A4%A 等）会抛 URIError。
+    // 必须在这里拦住：这行在请求回调里，异常逃出去就是整进程崩溃。
+    let urlPath;
+    try {
+      urlPath = decodeURIComponent(req.url.split('?')[0]);
+    } catch (e) {
+      res.writeHead(400, {'Content-Type':'text/plain; charset=utf-8'});
+      res.end('请求路径编码不合法');
+      return;
+    }
     const rel = urlPath === '/' ? 'index.html' : urlPath.replace(/^\/+/, '');
     const file = path.resolve(ROOT, rel);
     if (!file.startsWith(ROOT + path.sep) && file !== path.join(ROOT, 'index.html')) {
@@ -74,6 +108,18 @@ const server = http.createServer((req, res) => {
 
   res.writeHead(404, {'Content-Type':'text/plain; charset=utf-8'});
   res.end('404 未找到');
+}
+
+// 单请求异常兜底：任何一处同步异常都不该让服务整进程退出
+const server = http.createServer((req, res) => {
+  setCors(req, res);
+  if (req.method === 'OPTIONS') { res.writeHead(204); res.end(); return; }
+  try {
+    handle(req, res);
+  } catch (e) {
+    res.writeHead(500, {'Content-Type':'application/json; charset=utf-8'});
+    res.end(JSON.stringify({ error: '服务内部错误：' + String(e.message || e) }));
+  }
 });
 
 function callLLM(baseURL, apiKey, model, messages, temperature, cb) {

@@ -142,7 +142,8 @@ function makeDocument(htmlIds) {
 
 /**
  * 加载整个应用。
- * @param {{settings?: Object|null, fetchImpl?: Function}} [options]
+ * @param {{settings?: Object|null, fetchImpl?: Function, location?: Object}} [options]
+ *   location 用来模拟不同部署（本地 http / 静态托管的 https / file://）
  * @returns {{VP: Object, document: Object, store: Map, requests: Array, logs: string[]}}
  */
 function loadApp(options = {}) {
@@ -169,25 +170,40 @@ function loadApp(options = {}) {
     removeItem: (key) => store.delete(key),
   };
 
-  /** 默认的假接口：永远成功返回一句患者回应。 */
-  const defaultFetch = async () => ({
+  /** 最小的 Headers 假实现：只为探测本地服务标记用（浏览器里是原生类）。 */
+  class FakeHeaders {
+    constructor(pairs = {}) { this.map = new Map(Object.entries(pairs).map(([k, v]) => [k.toLowerCase(), String(v)])); }
+    get(name) { const k = String(name).toLowerCase(); return this.map.has(k) ? this.map.get(k) : null; }
+    has(name) { return this.map.has(String(name).toLowerCase()); }
+  }
+
+  /** 默认的假接口：永远成功返回一句患者回应；OPTIONS 探测带上本地服务标记。 */
+  const defaultFetch = async (url, init) => ({
     ok: true,
     status: 200,
+    headers: new FakeHeaders(
+      init && init.method === 'OPTIONS' ? { 'X-Local-Server': 'nursing-communication-training' } : {},
+    ),
     json: async () => ({ content: '（患者回应）' }),
   });
 
-  const respond = options.fetchImpl || defaultFetch;
   // 不论用哪个实现，都先记一笔请求：断言要看的是「应用到底发了什么」，
   // 而不是「假接口被调用了几次」。之前自定义 fetchImpl 直接替换了整个实现，
   // 于是「对话 1 次 + 评分 2 次重试」这条断言看到的是 0 次。
+  // 只记 POST：启动时探测 /api/chat 是否存在的 OPTIONS 不算一次接口调用，
+  // 否则每次断言都要为它多算一笔。
+  const respond = options.fetchImpl || defaultFetch;
   const fetchImpl = async (url, init) => {
-    requests.push({ url, body: init && init.body ? JSON.parse(init.body) : null });
+    const method = (init && init.method) || 'GET';
+    if (method !== 'OPTIONS') {
+      requests.push({ url, body: init && init.body ? JSON.parse(init.body) : null });
+    }
     return respond(url, init);
   };
 
   const window = {
     document,
-    location: { protocol: 'http:', hostname: 'localhost', href: 'http://localhost:3000/' },
+    location: options.location || { protocol: 'http:', hostname: 'localhost', href: 'http://localhost:3000/' },
     navigator: {},
     localStorage: localStorageFake,
     console: {
@@ -202,6 +218,7 @@ function loadApp(options = {}) {
     },
     clearTimeout() {},
     fetch: fetchImpl,
+    Headers: FakeHeaders,
   };
 
   const context = vm.createContext({});
@@ -216,6 +233,7 @@ function loadApp(options = {}) {
     setTimeout: window.setTimeout,
     clearTimeout: window.clearTimeout,
     fetch: window.fetch,
+    Headers: FakeHeaders,
     Promise,
     JSON,
     Object,
@@ -326,6 +344,50 @@ test('交互：发送消息会带上 system 提示词（含患者档案与通用
   assert.equal(payload.temperature, 0.8, '对话温度应为 0.8');
 });
 
+test('部署：静态托管（https）上探测不到本地服务时必须直连，不能死打 /api/chat', async () => {
+  // 这条用例守的是真实踩过的坑：判断写成 `protocol === 'http:' || 'https:'` 时条件恒为真，
+  // 部署到 GitHub Pages / Netlify 后仍然 POST 同源的 /api/chat（静态托管只会回 405），
+  // README 承诺的「自动改为直连」从未生效。
+  const { VP, document, requests } = loadApp({
+    location: { protocol: 'https:', hostname: 'l3187773278-star.github.io', href: 'https://l3187773278-star.github.io/nursing-communication-training/' },
+    fetchImpl: async () => ({
+      ok: false,
+      status: 405,
+      headers: new (class { get() { return null; } has() { return false; } })(),
+      json: async () => ({ content: '（静态托管上的回应）' }),
+    }),
+  });
+  document._element('input').value = '你好';
+  await VP.boot.send();
+
+  const real = requests.filter((r) => r.url !== '/api/chat');
+  assert.equal(real.length, 1, '应该只发一次真正的请求');
+  assert.equal(real[0].url, 'https://api.deepseek.com/chat/completions', '静态部署必须直连接口地址');
+  assert.ok(real[0].body.messages, '直连时请求体里要有 messages');
+  assert.equal(real[0].body.apiKey, undefined, '直连不能把 Key 塞进请求体（应放在 Authorization 头里）');
+});
+
+test('部署：本地 server.js 探测到标记时走 /api/chat 代理', async () => {
+  const { VP, document, requests } = loadApp();
+  document._element('input').value = '你好';
+  await VP.boot.send();
+
+  assert.equal(requests.length, 1);
+  assert.equal(requests[0].url, '/api/chat', '本地服务应走代理');
+  assert.equal(requests[0].body.apiKey, 'sk-test', '代理模式由服务端加鉴权头');
+});
+
+test('部署：file:// 双击打开时直连，不发同源请求', async () => {
+  const { VP, document, requests } = loadApp({
+    location: { protocol: 'file:', hostname: '', href: 'file:///D:/patient-demo/index.html' },
+  });
+  document._element('input').value = '你好';
+  await VP.boot.send();
+
+  assert.equal(requests.length, 1);
+  assert.equal(requests[0].url, 'https://api.deepseek.com/chat/completions');
+});
+
 test('交互：发送后对话区同时出现护士与患者两条气泡，输入框清空', async () => {
   const { VP, document } = loadApp();
   const input = document._element('input');
@@ -414,7 +476,9 @@ test('评分：模型输出被代码块包裹时也能解析', async () => {
 test('评分：第一次不是合法 JSON 时会自动重试一次', async () => {
   let call = 0;
   const { VP, document, requests } = loadApp({
-    fetchImpl: async () => {
+    // 启动时探测 /api/chat 的 OPTIONS 不算一次调用，不能占用 call 的序号
+    fetchImpl: async (url, init) => {
+      if (init && init.method === 'OPTIONS') return { ok: true, status: 204, json: async () => ({}) };
       call++;
       return { ok: true, status: 200, json: async () => ({ content: call <= 2 ? '这不是 JSON' : GOOD_SCORE }) };
     },

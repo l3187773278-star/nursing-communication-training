@@ -70,14 +70,21 @@ Click **⚙ Settings** in the top-right and paste an API key:
 2. Create an API key, paste it into the settings panel, click Save.
 
 **Why run the local server**: it serves the static files *and* proxies the model API. Calling the
-model provider straight from the browser runs into CORS; the local proxy sidesteps that, and it
-also keeps your API key out of the browser's request headers.
+model provider straight from the browser runs into CORS; the local proxy sidesteps that, and when
+going through it the auth header is added by the server, so your key never appears in the headers of
+a browser request to the provider.
+(The local server only answers CORS for local origins and caps request bodies at 256 KB.)
 
 ### Option 2: static hosting (GitHub Pages / Netlify)
 
 `index.html` + `js/` + `styles.css` are the whole app — publish the folder as a static site.
 There is no `/api/chat` proxy in that setup, so the front end automatically switches to calling
 the provider's OpenAI-compatible endpoint **directly**.
+
+> How that is decided: on startup the page sends one `OPTIONS` probe to the same-origin `/api/chat`;
+> only the local `server.js` answers with an `X-Local-Server` marker header. If the probe fails or the
+> marker is absent (static hosting has no such endpoint), the whole session goes direct and never
+> posts to a nonexistent endpoint.
 
 > Note for hosted deployments: the API key lives only in the user's own browser (localStorage) and
 > is never uploaded anywhere. Each user brings their own key — the site itself has no key built in,
@@ -94,10 +101,10 @@ the provider's OpenAI-compatible endpoint **directly**.
 │  ├─ scenarios.js     data for the 12 scenarios (persona / profile / opening line / rubric)
 │  ├─ core.js          pure logic: prompt assembly, model-output parsing, score maths, scenario self-check
 │  ├─ ui.js            rendering: chat bubbles, scenario tables, score panel (createElement only)
-│  └─ boot.js          wiring: state, event delegation, network calls, startup self-check
+│  └─ boot.js          wiring: state, event delegation, network calls, startup self-check, deployment detection
 └─ test/
    ├─ core.test.js     core-logic tests (24 cases, pure assertions, no DOM)
-   └─ boot.test.js     startup smoke test + wiring regression (25 cases, runs the real boot in a fake DOM)
+   └─ boot.test.js     startup smoke, wiring and deployment-detection regression (28 cases, runs the real boot in a fake DOM)
 ```
 
 ### Three deliberate design decisions
@@ -116,9 +123,9 @@ the provider's OpenAI-compatible endpoint **directly**.
 ## Tests
 
 ```bash
-node --test              # all 49 cases (zero dependencies, Node's built-in node:test)
+node --test              # all 52 cases (zero dependencies, Node's built-in node:test)
 node test/core.test.js   # core logic only (24 cases)
-node test/boot.test.js   # startup smoke test + wiring (25 cases)
+node test/boot.test.js   # startup smoke test + wiring + deployment detection (28 cases)
 ```
 
 > Use **`node --test` with no arguments** — it discovers the cases under `test/` itself.
@@ -137,7 +144,7 @@ code block / surrounded by prose / completely unparseable), dimension-score norm
 English field names, strings promoted to lists, total derived from the dimensions rather than
 trusting the model's own number), and a structural self-check over all 12 scenarios.
 
-**Startup smoke + wiring (`test/boot.test.js`, 25 cases)** runs the real startup flow in a minimal
+**Startup smoke + wiring (`test/boot.test.js`, 28 cases)** runs the real startup flow in a minimal
 fake DOM, with no browser involved:
 
 - all four scripts execute without throwing (white-screen bugs are caught right here, naming the file);
@@ -151,6 +158,12 @@ fake DOM, with no browser involved:
   HTML inside model output is treated as text;
 - switching scenarios resets the conversation, and an out-of-range index falls back to the first
   scenario instead of blanking the page;
+- **deployment detection** (3 cases): a local http page goes through the `/api/chat` proxy, a
+  statically hosted (https) page that cannot see a local server calls the provider endpoint
+  directly, and a `file://` page does the same. These guard a real bug: with the check written as
+  `protocol === 'http:' || protocol === 'https:'` the condition was always true, so a GitHub Pages
+  deployment kept POSTing to the same-origin `/api/chat` (405 on static hosting) and the documented
+  "switches to direct calls automatically" never happened;
 - unavailable local storage produces a notice rather than a frozen UI;
 - wiring regression: no inline `onclick` anywhere, every `data-action` has a dispatch branch, every
   `#id` referenced by code exists in `index.html`, script order matches the dependency order, and
@@ -211,20 +224,27 @@ Open **⚙ Settings** and change two fields (anything OpenAI-compatible works):
 
 ## Known issues & roadmap
 
-- **One scenario's rubric uses a sentence as a dimension key.** The rubric JSON uses a whole
-  sentence (e.g. `"总分 = 四个维度换算为百分制后汇总"`) where a dimension name belongs. It runs
-  fine — the model returns that key and the UI displays it — but it reads badly and makes the
-  nesting easy to misread when editing by hand. The fix is to restructure the rubric as
-  `{ dimensions: [{ key: '共情', anchors: [...], weight: 1 }], total: 'mean × 20' }` and have
-  `core.buildScoringSystem()` assemble the prompt from that. Re-validating all 12 scenarios is
-  part of the change, so it is done separately.
-- **No real-key dialogue run yet.** Two layers have been verified: syntax and HTTP
-  (`node --check`, routes 200/404, 400 when the key is missing), and browser-level interaction in
-  real headless Chromium (first screen renders the scenario, patient card and opening line;
-  clicking Send shows the "no API key" notice inside the conversation instead of failing silently;
-  clicking Save settings updates the status line and really writes to localStorage; switching
-  scenarios resets the conversation; no console errors throughout). Whether "the patient feels
-  real and the scores feel fair" needs one run with a real API key, and there is no record of that yet.
+- **"One scenario's rubric uses a sentence as a dimension key" is inaccurate (to be rewritten).**
+  That line — `总分 = 四个维度换算为百分制后汇总` — is not a JSON key at all; it is a prose line at the
+  end of the `scoring` text of all 12 scenarios (see the tail of each scenario in `js/scenarios.js`).
+  The actual dimension keys are the proper short names (`宣教内容完整性`, `通俗化表达`,
+  `依从性引导与误区纠正`, `沟通态度与共情`), and both execution and rendering are fine. If the rubric is
+  ever restructured (`{ dimensions: [{ key, anchors, weight }], total }` assembled by
+  `core.buildScoringSystem()`), that prose line is a good place to start generating it from; the change
+  must re-validate all 12 scenarios, so it is done separately.
+- **`server.js` has no automated tests.** It is covered only by `node --check` in CI. Manually
+  verified and passing: malformed URLs (`/%ZZ`, `/%E0%A4%A`) return 400 instead of taking the process
+  down, path traversal returns 403, `/api/chat` without a key returns 400, bodies over 256 KB return
+  413, and CORS headers are only sent for local origins. The next step is a `test/server.test.js`
+  that pins those assertions down.
+- **No real-key dialogue run yet.** Three layers have been verified: syntax and static checks
+  (`node --check`, 52 cases via `node --test`), the HTTP layer (the 200/400/403/413 cases and the
+  no-crash behaviour listed above), and browser-level interaction in real headless Chromium (first
+  screen renders the scenario, patient card and opening line; clicking Send shows the "no API key"
+  notice inside the conversation instead of failing silently; clicking Save settings updates the
+  status line and really writes to localStorage; switching scenarios resets the conversation; no
+  console errors throughout). Whether "the patient feels real and the scores feel fair" needs one run
+  with a real API key, and there is no record of that yet.
 - **Single-machine training by design.** No teacher console, no grade management, no multiplayer,
   no voice, no inter-rater reliability study. If someone needs a standalone installer or an
   on-premises / no-data-leaves-the-hospital deployment, packaging and a local-model route are

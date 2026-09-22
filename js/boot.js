@@ -73,6 +73,43 @@ window.VP = window.VP || {};
 
   /* ---------------- 网络 ---------------- */
 
+  /* 本地代理决策只探测一次：探不通就永久走直连，避免每条消息都白等一次 405/404。
+     null 表示"还没探测过"（一次都没调过接口时保持 null，行为与过去一致）。 */
+  let localProxyDetected = null;
+
+  /**
+   * 决定这次请求走哪条路，并返回真正的 endpoint。
+   *
+   * 过去这里写的是 `location.protocol === 'http:' || location.protocol === 'https:'`——
+   * 浏览器里这两个协议已经穷尽，条件恒为真，于是**部署到 GitHub Pages / Netlify 后依然会打
+   * 同源的 /api/chat**（静态托管没有这个接口，只会返回 405），README 承诺的"自动改为直连"从未生效。
+   * 现在只认「协议不是 file:」当作**候选**，真正用不用代理由一次轻量探测决定。
+   *
+   * @param {boolean} httpPage 页面是否由 http(s) 提供（file:// 双击打开时为 false）
+   * @param {{baseURL: string}} settings
+   * @returns {Promise<string>} 代理模式返回 '/api/chat'，直连模式返回完整接口地址
+   */
+  async function resolveEndpoint(httpPage, settings) {
+    const direct = `${settings.baseURL.replace(/\/+$/, '')}/chat/completions`;
+    if (!httpPage) return direct;
+    if (localProxyDetected === null) localProxyDetected = await probeLocalProxy();
+    return localProxyDetected ? '/api/chat' : direct;
+  }
+
+  /** 探测同源是否存在本地服务的 /api/chat（静态托管上没有这个头，file:// 上会直接抛错）。 */
+  async function probeLocalProxy() {
+    try {
+      const res = await fetch('/api/chat', {
+        method: 'OPTIONS',
+        headers: { 'Content-Type': 'application/json' },
+      });
+      // 认头不认状态码：静态托管对未知路径也可能回 204/200，只有本地服务会带这个标记
+      return res.headers && res.headers.get ? res.headers.get('X-Local-Server') !== null : false;
+    } catch (err) {
+      return false;
+    }
+  }
+
   /**
    * 调一次对话接口。
    * @param {Array<{role: string, content: string}>} messages
@@ -83,8 +120,11 @@ window.VP = window.VP || {};
     const settings = ui.readSettings();
     if (!settings.apiKey) throw new Error('请先点右上角「⚙ 设置」填写 API Key');
 
-    const useLocalProxy = location.protocol === 'http:' || location.protocol === 'https:';
-    const endpoint = useLocalProxy ? '/api/chat' : `${settings.baseURL.replace(/\/+$/, '')}/chat/completions`;
+    // 判定依据只能是协议：file:// 双击打开时没有同源服务，必须直连；
+    // 其余（http/https）交给 resolveEndpoint 探测——是本地 server.js 就用 /api/chat，否则直连。
+    const httpPage = location.protocol !== 'file:';
+    const endpoint = await resolveEndpoint(httpPage, settings);
+    const useLocalProxy = endpoint === '/api/chat';
     const payload = useLocalProxy
       ? {
           baseURL: settings.baseURL,
