@@ -1,5 +1,7 @@
 # 护理沟通模拟训练 · 对话式虚拟患者
 
+[![tests](https://github.com/l3187773278-star/nursing-communication-training/actions/workflows/test.yml/badge.svg)](https://github.com/l3187773278-star/nursing-communication-training/actions/workflows/test.yml)
+
 > 面向护理 / 医学生的**护患沟通训练工具**：AI 扮演患者或家属，学生以护士身份沟通，结束后由 AI 按四个维度自动评分并给出依据。
 > 12 个场景覆盖健康宣教、心理疏导、情绪与冲突、复杂情况四类。零依赖、零构建。
 
