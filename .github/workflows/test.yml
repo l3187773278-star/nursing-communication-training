@@ -1,0 +1,31 @@
+name: tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        node: ['20', '22', '24']
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+
+      # 本项目零依赖，不需要 npm install
+      - name: 语法检查
+        run: |
+          for f in server.js js/*.js test/*.js; do
+            node --check "$f"
+            echo "OK  $f"
+          done
+
+      - name: 全部测试（49 条）
+        run: node --test test/

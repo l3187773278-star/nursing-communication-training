@@ -5,6 +5,8 @@
 
 **这不是诊断工具**，仅用于沟通技能训练，不提供真实医疗诊断或治疗建议。
 
+![界面](docs/screenshot.png)
+
 ---
 
 ## 它解决什么问题
@@ -93,6 +95,9 @@ node --test test/        # 全部 49 条（零依赖，用 Node 18+ 内置 runne
 node test/core.test.js   # 只看核心逻辑（24 条）
 node test/boot.test.js   # 只看启动冒烟与接线（25 条）
 ```
+
+CI：`.github/workflows/test.yml` 会在每次 push / PR 时，用 Node 20、22、24 各跑一遍
+语法检查与上面全部用例——改坏哪一条，提交时就红，不用等人想起来再跑。
 
 **核心逻辑（`test/core.test.js`，24 条）** 覆盖：对话记录拼装、评分前置条件、
 提示词组装顺序（角色 → 档案 → 通用规则）、
